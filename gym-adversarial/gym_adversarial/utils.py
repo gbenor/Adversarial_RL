@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 from numpy import linalg as LA
 import tensorflow as tf
+
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.models import Model
@@ -22,6 +23,16 @@ def normalize(x_train, x_test):
     x_test /= x_test.max()
 
     return x_train, x_test
+
+def extract_samples_by_label(samples, labels, target_label):
+    idx = np.argwhere(labels == target_label)
+    return samples[idx]
+
+def select_random_samples(samples, k):
+    idx = np.random.randint(0, len(samples), k)
+    assert len(idx)==k
+    return samples[idx]
+
 
 
 def extract_two_classes(img, labels, cls1, cls2):

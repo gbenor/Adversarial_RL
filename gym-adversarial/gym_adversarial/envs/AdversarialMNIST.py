@@ -1,21 +1,17 @@
-import random
-import json
 from collections import namedtuple
-from numpy import linalg as LA
 
 import gym
-from gym import spaces
 # import pandas as pd
 import numpy as np
-# from gym_adversarial import utils as ut
-from gym_adversarial.utils import load_data
-import matplotlib.pyplot as plt
-from gym_adversarial.envs.conv_mnist import ConvMinst
-from gym_adversarial.envs.mnist_cluster import MNIST_Cluster
+from gym import spaces
 from keras.utils import to_categorical
+from numpy import linalg as LA
 
-from consts import ACTIONS, NUM_CLASSES, NUM_OF_CLUSTERS, MAX_STEPS, \
-    MAX_PERTURBATION, MIN_STEPS_REWARD_TH0, MIN_STEPS_REWARD_TH1, REWARD_COEF, INITIAL_STEP_SIZE
+from gym_adversarial.envs.centers import Centers
+from gym_adversarial.envs.consts import ACTIONS, INITIAL_STEP_SIZE, MAX_PERTURBATION, MAX_STEPS, MIN_STEPS_REWARD_TH0, \
+    MIN_STEPS_REWARD_TH1, NUM_CLASSES, SAMPLES_FOR_CALC_CENTERS
+from gym_adversarial.envs.conv_mnist import ConvMinst
+from gym_adversarial.utils import load_data
 
 
 def perturbation_reward(cur_perturbation, max_perturbation):
@@ -37,23 +33,36 @@ def min_steps_reward(steps):
     return (MIN_STEPS_REWARD_TH1 - steps) / steps
 
 
+def select_initial_sample(samples, labels, target_label):
+    while True:
+        index = np.random.choice(len(samples))
+        if labels[index] != target_label:
+            break
+    return samples[index].reshape(28, 28, 1), labels[index]
+
+
 class AdversarialMNIST(gym.Env):
     """An environment for finding adversarial examples in MNIST for OpenAI gym"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, target_label=6, step_size: float = INITIAL_STEP_SIZE):
+    def __init__(self, target_label=6, step_size: float = INITIAL_STEP_SIZE, test_mode = False):
         super(AdversarialMNIST, self).__init__()
         self.action_space = spaces.Discrete(len(ACTIONS))
         self.observation_space = spaces.Box(low=0, high=1, shape=(28, 28), dtype=np.float32)
         self.step_size = step_size
+        self.test_mode = test_mode
 
-        self.train_images, self.train_labels, test_images, test_labels = load_data()
+        self.train_images, self.train_labels, self.test_images, self.test_labels = load_data()
         model_file = "gym-adversarial/gym_adversarial/envs/conv_mnist_model"
         cluster_file = "gym-adversarial/gym_adversarial/envs/cluster.pkl"
+        center_file = "gym-adversarial/gym_adversarial/envs/center.pkl"
+
         self.classifier = ConvMinst(model_file,
                                     self.train_images, to_categorical(self.train_labels, NUM_CLASSES),
-                                    test_images, to_categorical(test_labels, NUM_CLASSES))
-        self.cluster = MNIST_Cluster(cluster_file, NUM_OF_CLUSTERS, self.train_images, self.train_labels)
+                                    self.test_images, to_categorical(self.test_labels, NUM_CLASSES))
+        # self.cluster = MNIST_Cluster(cluster_file, NUM_OF_CLUSTERS, self.train_images, self.train_labels)
+        self.cluster = Centers(fname=center_file, k=SAMPLES_FOR_CALC_CENTERS, target_label=target_label,
+                               samples=self.train_images, labels=self.train_labels)
         self.target_label = target_label
         # fig = plt.figure()
         # fig.add_axes([0, 0, 0.5, 1.0])
@@ -64,13 +73,14 @@ class AdversarialMNIST(gym.Env):
     def reset(self):
         # Reset the state of the environment to an initial state
         self.current_step = 0
-        while True:
-            index = np.random.choice(len(self.train_images))
-            if index != self.target_label:
-                break
-        self.orig_image = np.copy(self.train_images[index])
-        self.orig_label = np.copy(self.train_labels[index])
-        self.cur_image = np.copy(self.train_images[index])
+        if self.test_mode:
+            sample, label = select_initial_sample(self.test_images, self.test_labels, self.target_label)
+        else:
+            sample, label = select_initial_sample(self.train_images, self.train_labels, self.target_label)
+
+        self.orig_image = np.copy(sample)
+        self.orig_label = np.copy(label)
+        self.cur_image = np.copy(sample)
         return self._next_observation()
 
     def render(self, mode='human', close=False):
@@ -93,14 +103,14 @@ class AdversarialMNIST(gym.Env):
 
     def _take_action(self, action: str):
         assert action in ACTIONS, f"illegal action: {action}"
-        print(f"Action = {action}")
+        # print(f"Action = {action}")
         direction = None
         if action == "CLOSET_CLUSTER":
-            distance, direction = self.cluster.get_closest_center(self.cur_image, self.target_label)
+            direction = self.cluster.get_closest_center(self.cur_image)
         if action == "FARTHEST_CLUSTER":
-            distance, direction = self.cluster.get_farthest_center(self.cur_image, self.target_label)
+            direction = self.cluster.get_farthest_center(self.cur_image)
         if action == "ORIGINAL_IMAGE":
-            distance, direction = None, self.orig_image
+            direction = self.orig_image
         if action == "DECREASE_STEP":
             self.step_size /= 2
             direction = 0
@@ -113,15 +123,21 @@ class AdversarialMNIST(gym.Env):
         self._take_action(ACTIONS[action])
         obs = self._next_observation()
 
-        reward = REWARD_COEF["PERTURBATION"] * perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION) + \
-                 REWARD_COEF["LABEL"] * label_reward(obs.predicted_labels, self.target_label) + \
-                 REWARD_COEF["MIN_STEPS"] * min_steps_reward(self.current_step)
+        if label_reward(obs.predicted_labels, self.target_label)>0:
+            reward = 1 + 100*perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION)
+        else:
+            reward = 0
 
-        # delay_modifier = max((self.current_step / MAX_STEPS), 1)
-        delay_modifier = 1
-        reward = reward * delay_modifier
+        #
+        # reward = REWARD_COEF["PERTURBATION"] * perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION) + \
+        #          REWARD_COEF["LABEL"] * label_reward(obs.predicted_labels, self.target_label) + \
+        #          REWARD_COEF["MIN_STEPS"] * min_steps_reward(self.current_step)
+        #
+        # # delay_modifier = max((self.current_step / MAX_STEPS), 1)
+        # delay_modifier = 1
+        # reward = reward * delay_modifier
         done = (self.current_step == MAX_STEPS) or \
-               (label_reward(obs.predicted_labels, self.target_label) > 1 and
+               (label_reward(obs.predicted_labels, self.target_label) > 0 and
                 perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION) > 0)
 
         return obs, reward, done, {}

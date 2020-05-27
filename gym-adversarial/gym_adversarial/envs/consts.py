@@ -1,6 +1,10 @@
+DQN_WEIGHTS_FILENAME = "gym-adversarial/gym_adversarial/envs/dqn_weights_step_{}.h5f"
+DQN_LOG_FILENAME = "gym-adversarial/gym_adversarial/envs/dqn_log_step_{}.h5f"
+
+
 REWARD_COEF = {
     "PERTURBATION" : 1,
-    "LABEL" : 1,
+    "LABEL" : 5,
     "MIN_STEPS" : 1
 }
 MAX_PERTURBATION = 4.0
@@ -10,7 +14,13 @@ MAX_STEPS = 200
 MIN_STEPS_REWARD_TH0 = 5
 MIN_STEPS_REWARD_TH1 = 10
 INITIAL_STEP_SIZE = 0.1
+WINDOW_LENGTH = 4
+
+SAMPLES_FOR_CALC_CENTERS = 20
 
 ACTIONS = ["CLOSET_CLUSTER", "FARTHEST_CLUSTER", "ORIGINAL_IMAGE", "DECREASE_STEP"] #Todo: implement normal_dist
+
+NB_ACTIONS = len(ACTIONS)
+
 # ACTIONS = ["CLOSET_CLUSTER", "FARTHEST_CLUSTER", "ORIGINAL_IMAGE", "NORMAL_DIST_RANDOM"]
 # ACTIONS = {'left': 0, 'stop': 1, 'right': 2}
