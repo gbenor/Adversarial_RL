@@ -1,28 +1,26 @@
 from collections import namedtuple
 
 import gym
-# import pandas as pd
 import numpy as np
 from gym import spaces
 from keras.utils import to_categorical
 from numpy import linalg as LA
 
 from gym_adversarial.envs.centers import Centers
-from gym_adversarial.envs.consts import ACTIONS, INITIAL_STEP_SIZE, MAX_PERTURBATION, MAX_STEPS, MIN_STEPS_REWARD_TH0, \
-    MIN_STEPS_REWARD_TH1, NUM_CLASSES, SAMPLES_FOR_CALC_CENTERS
+from gym_adversarial.envs.consts import ACTIONS, INITIAL_STEP_SIZE, MAX_PERTURBATION, MAX_STEPS, NUM_CLASSES, \
+    SAMPLES_FOR_CALC_CENTERS, MIN_PERTURBATION_REWARD, MAX_PERTURBATION_REWARD, \
+    CLASSIFIER_MODEL_FILE, CENTER_FILE, REWARD_COEF, STEPS_TO_IMPROVE
 from gym_adversarial.envs.conv_mnist import ConvMinst
 from gym_adversarial.utils import load_data
 
 
 def perturbation_reward(cur_perturbation, max_perturbation):
-    return max(0, (max_perturbation - cur_perturbation))
+    return np.clip((max_perturbation - cur_perturbation),
+                   a_min=MIN_PERTURBATION_REWARD, a_max=MAX_PERTURBATION_REWARD)
 
 
-def label_reward(predicted_values, target_label):
-    target_score = predicted_values[target_label]
-    label_score = 1 if np.argmax(predicted_values) == target_label else 0
-    return label_score
-    # return target_score + label_score
+def reach_target_label(predicted_values, target_label) -> bool:
+    return np.argmax(predicted_values) == target_label
 
 
 def min_steps_reward(steps):
@@ -45,34 +43,34 @@ class AdversarialMNIST(gym.Env):
     """An environment for finding adversarial examples in MNIST for OpenAI gym"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, target_label=6, step_size: float = INITIAL_STEP_SIZE, test_mode = False):
+    def __init__(self, target_label=6, step_size: float = INITIAL_STEP_SIZE, test_mode=False):
         super(AdversarialMNIST, self).__init__()
+        self.target_label = target_label
         self.action_space = spaces.Discrete(len(ACTIONS))
         self.observation_space = spaces.Box(low=0, high=1, shape=(28, 28), dtype=np.float32)
         self.step_size = step_size
         self.test_mode = test_mode
 
         self.train_images, self.train_labels, self.test_images, self.test_labels = load_data()
-        model_file = "gym-adversarial/gym_adversarial/envs/conv_mnist_model"
-        cluster_file = "gym-adversarial/gym_adversarial/envs/cluster.pkl"
-        center_file = "gym-adversarial/gym_adversarial/envs/center.pkl"
 
-        self.classifier = ConvMinst(model_file,
+        self.classifier = ConvMinst(CLASSIFIER_MODEL_FILE,
                                     self.train_images, to_categorical(self.train_labels, NUM_CLASSES),
                                     self.test_images, to_categorical(self.test_labels, NUM_CLASSES))
-        # self.cluster = MNIST_Cluster(cluster_file, NUM_OF_CLUSTERS, self.train_images, self.train_labels)
-        self.cluster = Centers(fname=center_file, k=SAMPLES_FOR_CALC_CENTERS, target_label=target_label,
+        # self.cluster = MNIST_Cluster(CLUSTER_FILE, NUM_OF_CLUSTERS, self.train_images, self.train_labels)
+        self.cluster = Centers(fname=CENTER_FILE, k=SAMPLES_FOR_CALC_CENTERS, target_label=target_label,
                                samples=self.train_images, labels=self.train_labels)
-        self.target_label = target_label
-        # fig = plt.figure()
-        # fig.add_axes([0, 0, 0.5, 1.0])
-        # self.ax1 = fig.axes[0]
-        # self.ax1.set_yticklabels([])
-        # self.ax1.set_xticklabels([])
+
+        self.orig_image = None
+        self.orig_label = None
+        self.cur_image = None
+        self.current_step = None
+        self.current_step_while_acceptable_result = None
+        self.last_action = None
 
     def reset(self):
         # Reset the state of the environment to an initial state
         self.current_step = 0
+        self.current_step_while_acceptable_result = 0
         if self.test_mode:
             sample, label = select_initial_sample(self.test_images, self.test_labels, self.target_label)
         else:
@@ -85,13 +83,13 @@ class AdversarialMNIST(gym.Env):
 
     def render(self, mode='human', close=False):
         obs = self._next_observation()
-        print(f"Original label={obs.original_label}\t Current label={np.argmax(obs.predicted_labels)}\t"
-              f"Target prediction score={obs.predicted_labels[self.target_label]:.2f}\t Perturbation={obs.perturbation_norm:.2f}\t"
-              f"Step size={self.step_size:.4f}\t")
-        # self.ax1.clear()
-        # self.ax1.imshow(self.cur_image, cmap='gray_r')
-        # plt.draw()
-        # plt.pause(0.001)
+        print(
+            f"Step={self.current_step}\t Original label={obs.original_label}\t "
+            f"Curr label={np.argmax(obs.predicted_labels)}\t"
+            f"Target pred score={obs.predicted_labels[self.target_label]:.2f}\t "
+            f"Pert={obs.perturbation_norm:.2f}\t "
+            f"Step size={self.step_size:.4f}\t"
+            f"Last act={self.last_action}")
 
     def _next_observation(self):
         Observation = namedtuple('Observation', ['image', 'original_label', 'predicted_labels',
@@ -103,6 +101,7 @@ class AdversarialMNIST(gym.Env):
 
     def _take_action(self, action: str):
         assert action in ACTIONS, f"illegal action: {action}"
+        self.last_action = action
         # print(f"Action = {action}")
         direction = None
         if action == "CLOSET_CLUSTER":
@@ -123,21 +122,18 @@ class AdversarialMNIST(gym.Env):
         self._take_action(ACTIONS[action])
         obs = self._next_observation()
 
-        if label_reward(obs.predicted_labels, self.target_label)>0:
-            reward = 1 + 100*perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION)
-        else:
-            reward = 0
+        # reward only if we reach the target label
+        reward = 0
+        if reach_target_label(obs.predicted_labels, self.target_label):
+            reward = 1 * REWARD_COEF["LABEL"] + \
+                     REWARD_COEF["PERTURBATION"] * perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION)
 
-        #
-        # reward = REWARD_COEF["PERTURBATION"] * perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION) + \
-        #          REWARD_COEF["LABEL"] * label_reward(obs.predicted_labels, self.target_label) + \
-        #          REWARD_COEF["MIN_STEPS"] * min_steps_reward(self.current_step)
-        #
-        # # delay_modifier = max((self.current_step / MAX_STEPS), 1)
-        # delay_modifier = 1
-        # reward = reward * delay_modifier
-        done = (self.current_step == MAX_STEPS) or \
-               (label_reward(obs.predicted_labels, self.target_label) > 0 and
-                perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION) > 0)
+        acceptable_result: bool = reach_target_label(obs.predicted_labels, self.target_label) and \
+                                  (perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION) >= 0)
+
+        if acceptable_result:
+            self.current_step_while_acceptable_result += 1
+
+        done = (self.current_step == MAX_STEPS) or (self.current_step_while_acceptable_result == STEPS_TO_IMPROVE)
 
         return obs, reward, done, {}

@@ -1,26 +1,47 @@
-DQN_WEIGHTS_FILENAME = "gym-adversarial/gym_adversarial/envs/dqn_weights_step_{}.h5f"
-DQN_LOG_FILENAME = "gym-adversarial/gym_adversarial/envs/dqn_log_step_{}.h5f"
+#########################################
+# File path
+#########################################
+CLASSIFIER_MODEL_FILE = "gym-adversarial/gym_adversarial/envs/conv_mnist_model"
+CLUSTER_FILE = "gym-adversarial/gym_adversarial/envs/cluster.pkl"
+CENTER_FILE = "gym-adversarial/gym_adversarial/envs/center.pkl"
+DQN_WEIGHTS_FILENAME = "gym-adversarial/gym_adversarial/envs/dqn_weights_step_{step}.h5f"
+WEIGHTS_CHECKPOINT = 10000
+DQN_LOG_FILENAME = "gym-adversarial/gym_adversarial/envs/dqn_log.json"
+LOG_CHECKPOINT = 1000
 
-
-REWARD_COEF = {
-    "PERTURBATION" : 1,
-    "LABEL" : 5,
-    "MIN_STEPS" : 1
-}
-MAX_PERTURBATION = 4.0
-NUM_CLASSES = 10
-NUM_OF_CLUSTERS = 2
-MAX_STEPS = 200
-MIN_STEPS_REWARD_TH0 = 5
-MIN_STEPS_REWARD_TH1 = 10
-INITIAL_STEP_SIZE = 0.1
-WINDOW_LENGTH = 4
-
-SAMPLES_FOR_CALC_CENTERS = 20
-
+#########################################
+# Environment parameters
+#########################################
+# ACTIONS = ["CLOSET_CLUSTER", "FARTHEST_CLUSTER", "ORIGINAL_IMAGE", "NORMAL_DIST_RANDOM"]
 ACTIONS = ["CLOSET_CLUSTER", "FARTHEST_CLUSTER", "ORIGINAL_IMAGE", "DECREASE_STEP"] #Todo: implement normal_dist
-
 NB_ACTIONS = len(ACTIONS)
 
-# ACTIONS = ["CLOSET_CLUSTER", "FARTHEST_CLUSTER", "ORIGINAL_IMAGE", "NORMAL_DIST_RANDOM"]
-# ACTIONS = {'left': 0, 'stop': 1, 'right': 2}
+REWARD_COEF = {
+    "PERTURBATION": 10,
+    "LABEL": 1,
+}
+MAX_PERTURBATION = 4.0
+MIN_PERTURBATION_REWARD = -2
+MAX_PERTURBATION_REWARD = 2
+
+INITIAL_STEP_SIZE = 0.1
+MAX_STEPS = 50
+STEPS_TO_IMPROVE = 5
+
+NUM_CLASSES = 10
+NUM_OF_CLUSTERS = 2
+SAMPLES_FOR_CALC_CENTERS = 20
+
+
+#########################################
+# DQN parameters
+#########################################
+# Memory
+WINDOW_LENGTH = 4
+MEMORY_LIMIT = 10000
+
+TARGET_MODEL_UPDATE = 500
+
+# MIN_STEPS_REWARD_TH0 = 5
+# MIN_STEPS_REWARD_TH1 = 10
+
