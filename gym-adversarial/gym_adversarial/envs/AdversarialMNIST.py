@@ -9,7 +9,8 @@ from numpy import linalg as LA
 from gym_adversarial.envs.centers import Centers
 from gym_adversarial.envs.consts import ACTIONS, INITIAL_STEP_SIZE, MAX_PERTURBATION, MAX_STEPS, NUM_CLASSES, \
     SAMPLES_FOR_CALC_CENTERS, MIN_PERTURBATION_REWARD, MAX_PERTURBATION_REWARD, \
-    CLASSIFIER_MODEL_FILE, CENTER_FILE, REWARD_COEF, STEPS_TO_IMPROVE
+    CLASSIFIER_MODEL_FILE, CENTER_FILE, REWARD_COEF, STEPS_TO_IMPROVE, MIN_STEP_SIZE, MAX_STEP_SIZE, \
+    MIN_DIFF_BETWEEN_IMAGES
 from gym_adversarial.envs.conv_mnist import ConvMinst
 from gym_adversarial.utils import load_data
 
@@ -39,6 +40,19 @@ def select_initial_sample(samples, labels, target_label):
     return samples[index].reshape(28, 28, 1), labels[index]
 
 
+def decrease_step(step_size: float) -> float:
+    if step_size > 0.4:
+        return step_size / 2
+    return max(MIN_STEP_SIZE, step_size- 0.05)
+
+
+def increase_step(step_size: float) -> float:
+    if step_size < MAX_STEP_SIZE / 2:
+        return step_size * 2
+    return max(MAX_STEP_SIZE, step_size + MAX_STEP_SIZE/4)
+
+
+
 class AdversarialMNIST(gym.Env):
     """An environment for finding adversarial examples in MNIST for OpenAI gym"""
     metadata = {'render.modes': ['human']}
@@ -51,6 +65,7 @@ class AdversarialMNIST(gym.Env):
         self.step_size = step_size
         self.test_mode = test_mode
 
+
         self.train_images, self.train_labels, self.test_images, self.test_labels = load_data()
 
         self.classifier = ConvMinst(CLASSIFIER_MODEL_FILE,
@@ -58,7 +73,19 @@ class AdversarialMNIST(gym.Env):
                                     self.test_images, to_categorical(self.test_labels, NUM_CLASSES))
         # self.cluster = MNIST_Cluster(CLUSTER_FILE, NUM_OF_CLUSTERS, self.train_images, self.train_labels)
         self.cluster = Centers(fname=CENTER_FILE, k=SAMPLES_FOR_CALC_CENTERS, target_label=target_label,
-                               samples=self.train_images, labels=self.train_labels)
+                               samples=self.train_images, labels=self.train_labels, force_fit=False)
+        while True:
+            print("check that the centers are classified correctly")
+            centers_classified_correct = True
+            for c in self.cluster.get_centers():
+                p = self.classifier._model(c.reshape(1, 28, 28, 1))
+                predicted_class = np.argmax(p)
+                centers_classified_correct = centers_classified_correct and (predicted_class == self.target_label)
+            if centers_classified_correct:
+                break
+            print("the centers aren't classified correctly. re-fit")
+            self.cluster.fit()
+
 
         self.orig_image = None
         self.orig_label = None
@@ -111,29 +138,50 @@ class AdversarialMNIST(gym.Env):
         if action == "ORIGINAL_IMAGE":
             direction = self.orig_image
         if action == "DECREASE_STEP":
-            self.step_size /= 2
-            direction = 0
+            self.step_size = decrease_step(self.step_size)
+            direction = np.zeros(shape=(28, 28, 1))
+        if action == "INCREASE_STEP":
+            self.step_size = increase_step(self.step_size)
+            direction = np.zeros(shape=(28, 28, 1))
 
-        self.cur_image += self.step_size * direction
+        # self.cur_image += self.step_size * direction
+        perturb = (direction - self.cur_image)
+        perturb_norm = LA.norm(perturb.reshape(28,28), ord="fro")
+        if perturb_norm < self.step_size:
+            print("min pert")
+            self.cur_image = np.copy(direction)
+        else:
+            perturb /= perturb_norm
+            self.cur_image += self.step_size * perturb
 
-    def step(self, action: int):
+    def step(self, action):
         # Execute one time step within the environment
         self.current_step += 1
-        self._take_action(ACTIONS[action])
+        if type(action) == str:
+            self._take_action(str(action))
+        if type(action) == int:
+            self._take_action(ACTIONS[action])
         obs = self._next_observation()
 
         # reward only if we reach the target label
         reward = 0
-        if reach_target_label(obs.predicted_labels, self.target_label):
-            reward = 1 * REWARD_COEF["LABEL"] + \
-                     REWARD_COEF["PERTURBATION"] * perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION)
+        # if reach_target_label(obs.predicted_labels, self.target_label):
+        #     reward = 1 * REWARD_COEF["LABEL"] + \
+        #              REWARD_COEF["PERTURBATION"] * perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION)
 
         acceptable_result: bool = reach_target_label(obs.predicted_labels, self.target_label) and \
                                   (perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION) >= 0)
 
         if acceptable_result:
+            reward = perturbation_reward(obs.perturbation_norm, MAX_PERTURBATION)
+
+        if acceptable_result:
             self.current_step_while_acceptable_result += 1
 
         done = (self.current_step == MAX_STEPS) or (self.current_step_while_acceptable_result == STEPS_TO_IMPROVE)
+
+        # self.history["images"].append(obs.image)
+        # self.history["labels"].append(np.argmax(obs.predicted_labels))
+        # self.history["perturbations"].append(obs.perturbation_norm)
 
         return obs, reward, done, {}
