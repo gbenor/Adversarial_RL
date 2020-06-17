@@ -22,19 +22,21 @@ class Centers():
         self.samples = samples
         self.labels = labels
 
-        if (not self._fname.exists()) or force_fit:
-            self.fit(samples, labels, k, target_label)
-        else:
-            self.load()
+        self.fit()
 
-    def save(self):
-        with self._fname.open("wb")  as handle:
-            pickle.dump(self.model, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-    def load(self):
-        with self._fname.open("rb")  as handle:
-            self.model = pickle.load(handle)
-        print("cluster: load pretrained cluster")
+    #     if (not self._fname.exists()) or force_fit:
+    #         self.fit()
+    #     else:
+    #         self.load()
+    #
+    # def save(self):
+    #     with self._fname.open("wb")  as handle:
+    #         pickle.dump(self.model, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    #
+    # def load(self):
+    #     with self._fname.open("rb")  as handle:
+    #         self.model = pickle.load(handle)
+    #     print("cluster: load pretrained cluster")
 
     def fit(self):
         samples = extract_samples_by_label(self.samples, self.labels, self.target_label)
@@ -51,7 +53,7 @@ class Centers():
 
         assert max_dist > 0
         self.model = (v1.reshape(28,28,1), v2.reshape(28,28,1))
-        self.save()
+        # self.save()
 
     def get_closest_center(self, x):
         if calc_distance(self.model[0], x) < calc_distance(self.model[1], x):

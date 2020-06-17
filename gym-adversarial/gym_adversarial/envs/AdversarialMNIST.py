@@ -57,13 +57,20 @@ class AdversarialMNIST(gym.Env):
     """An environment for finding adversarial examples in MNIST for OpenAI gym"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, target_label=6, step_size: float = INITIAL_STEP_SIZE, test_mode=False):
+    def __init__(self, target_label, step_size: float = INITIAL_STEP_SIZE, test_mode=False, result_directory=None, test_description=None):
         super(AdversarialMNIST, self).__init__()
         self.target_label = target_label
         self.action_space = spaces.Discrete(len(ACTIONS))
         self.observation_space = spaces.Box(low=0, high=1, shape=(28, 28), dtype=np.float32)
-        self.step_size = step_size
+
+        self.init_step_size = step_size
+        self.step_size = None
         self.test_mode = test_mode
+        self.result_directory = result_directory
+        self.test_description = test_description
+        if test_mode:
+            assert result_directory is not None
+            assert test_description is not None
 
 
         self.train_images, self.train_labels, self.test_images, self.test_labels = load_data()
@@ -73,7 +80,7 @@ class AdversarialMNIST(gym.Env):
                                     self.test_images, to_categorical(self.test_labels, NUM_CLASSES))
         # self.cluster = MNIST_Cluster(CLUSTER_FILE, NUM_OF_CLUSTERS, self.train_images, self.train_labels)
         self.cluster = Centers(fname=CENTER_FILE, k=SAMPLES_FOR_CALC_CENTERS, target_label=target_label,
-                               samples=self.train_images, labels=self.train_labels, force_fit=False)
+                               samples=self.train_images, labels=self.train_labels, force_fit=True)
         while True:
             print("check that the centers are classified correctly")
             centers_classified_correct = True
@@ -96,15 +103,29 @@ class AdversarialMNIST(gym.Env):
 
     def reset(self):
         # Reset the state of the environment to an initial state
+        self.step_size = self.init_step_size
         self.current_step = 0
         self.current_step_while_acceptable_result = 0
-        if self.test_mode:
-            sample, label = select_initial_sample(self.test_images, self.test_labels, self.target_label)
-        else:
-            sample, label = select_initial_sample(self.train_images, self.train_labels, self.target_label)
+
+        while True:
+            print("check that the init image is classified correctly")
+            if self.test_mode:
+                sample, label = select_initial_sample(self.test_images, self.test_labels, self.target_label)
+            else:
+                sample, label = select_initial_sample(self.train_images, self.train_labels, self.target_label)
+
+            p = self.classifier._model(sample.reshape(1, 28, 28, 1))
+            predicted_class = np.argmax(p)
+            print(label)
+            if label == predicted_class:
+                break
+            print("error in init label, select another label")
+            print (label)
+            print(predicted_class)
 
         self.orig_image = np.copy(sample)
-        self.orig_label = np.copy(label)
+        self.orig_label = label
+
         self.cur_image = np.copy(sample)
         return self._next_observation()
 
@@ -152,7 +173,8 @@ class AdversarialMNIST(gym.Env):
             self.cur_image = np.copy(direction)
         else:
             perturb /= perturb_norm
-            self.cur_image += self.step_size * perturb
+            perturb = perturb.astype('float32')
+            self.cur_image = np.copy(self.cur_image + self.step_size * perturb)
 
     def step(self, action):
         # Execute one time step within the environment

@@ -1,3 +1,5 @@
+import pickle
+from pathlib import Path
 from rl.callbacks import Callback
 import numpy as np
 
@@ -22,28 +24,35 @@ class CustomHistoryCallback(Callback):
     def on_episode_begin(self, episode, logs={}):
         """Called at beginning of each episode"""
         self.history = {
+            "target": self.env.target_label,
+            "source_label": self.env.orig_label,
             "images": [],
             "labels": [],
-            "perturbations": []
+            "perturbations": [],
+            "actions" : []
         }
 
-    def on_step_end(self, step, logs={}):
+    def on_action_begin(self, action, logs={}):
+        self.history["actions"].append(action)
+
+
+    def on_step_begin(self, step, logs={}):
         """Called at end of each step"""
-        print("on_step_end callback")
         obs = self.env._next_observation()
 
-        self.history["images"].append(obs.image)
+        self.history["images"].append(np.copy(obs.image))
         self.history["labels"].append(np.argmax(obs.predicted_labels))
         self.history["perturbations"].append(obs.perturbation_norm)
 
     def on_episode_end(self, episode, logs={}):
         """Called at end of each episode"""
-        print("on_episode_end")
-        print(" ***** min pert: ******")
-        i = find_minpert_index(self.history, self.env.target_label)
-        print(i)
-        print (self.history["labels"][i])
-        print (self.history["perturbations"][i])
+        result_directory = Path(self.env.result_directory)
+        result_directory.mkdir(parents=True, exist_ok=True)
+
+        target = self.history["target"]
+        result_file = result_directory / f"{self.env.test_description}_target={target}_episode={episode}.pkl"
+        with result_file.open("wb") as handle:
+            pickle.dump(self.history, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 
