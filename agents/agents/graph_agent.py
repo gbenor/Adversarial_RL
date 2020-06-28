@@ -17,6 +17,8 @@ from rl.core import Agent
 #     - `save_weights`
 #     - `layers`
 #
+from gym_adversarial.envs.consts import STEPS_TO_CHANGE_CLUSTER
+
 
 class GraphAgent(Agent):
     def __init__(self, target_class, policy_graph, init_state=None):
@@ -25,6 +27,7 @@ class GraphAgent(Agent):
         self.policy_graph = policy_graph
         self.init_state = init_state
         self.current_state = None
+        self.steps_to_change_cluster = None
 
         self.compiled = True
 
@@ -32,6 +35,7 @@ class GraphAgent(Agent):
         """Resets all internally kept states after an episode is completed.
         """
         self.current_state = self.init_state
+        self.steps_to_change_cluster = STEPS_TO_CHANGE_CLUSTER
         print ("episode reset_states")
 
     def forward(self, observation):
@@ -49,6 +53,14 @@ class GraphAgent(Agent):
         predicted_class = np.argmax(observation.predicted_labels)
         predict_target_class = predicted_class == self.target_class
 
+        if self.current_state == "ChangeCenters":
+            if observation.steps > self.steps_to_change_cluster:
+                self.steps_to_change_cluster+=STEPS_TO_CHANGE_CLUSTER
+                self.current_state = self.init_state
+                return node_data['action']
+            else:
+                self.current_state = successor
+                return self.forward(observation)
 
         if node_data['action'] is None:
             self.current_state = successor

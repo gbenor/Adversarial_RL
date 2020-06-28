@@ -1,6 +1,9 @@
+import os
 from random import randint
 
 import gym
+from pathlib import Path
+
 import gym_adversarial
 import numpy as np
 import tensorflow as tf
@@ -9,7 +12,7 @@ import keras
 from keras.layers import Permute
 
 from gym_adversarial.envs.consts import ACTIONS, WINDOW_LENGTH, DQN_WEIGHTS_FILENAME, DQN_LOG_FILENAME, NB_ACTIONS, \
-    MEMORY_LIMIT, TARGET_MODEL_UPDATE, WEIGHTS_CHECKPOINT, LOG_CHECKPOINT, DQN_LR
+    MEMORY_LIMIT, TARGET_MODEL_UPDATE, WEIGHTS_CHECKPOINT, LOG_CHECKPOINT, DQN_LR, DQN_DIR
 from keras.optimizers import Adam
 import keras.backend as K
 
@@ -19,7 +22,7 @@ from rl.memory import SequentialMemory
 from rl.core import Processor
 from rl.callbacks import FileLogger, ModelIntervalCheckpoint
 import click
-
+from gym_adversarial.envs.AdversarialCallbacks import CustomHistoryCallback
 
 
 def buid_model(window_length: int, nb_actions: int):
@@ -76,7 +79,7 @@ def start_policy(obs):
 @click.argument('fit_steps', type=int)
 @click.option('--cont', default=False)
 def fit_dqn(fit_steps: int, cont: bool):
-    training_env = gym.make('adver-v0', target_label=6, test_mode=False)
+    training_env = gym.make('adver-v0', target_label=1, test_mode=False)
 
     callbacks = [ModelIntervalCheckpoint(DQN_WEIGHTS_FILENAME, interval=WEIGHTS_CHECKPOINT)]
     callbacks += [FileLogger(DQN_LOG_FILENAME, interval=LOG_CHECKPOINT)]
@@ -93,10 +96,20 @@ def fit_dqn(fit_steps: int, cont: bool):
 @click.command()
 @click.argument('nb_episodes', type=int)
 def test_dqn(nb_episodes: int):
-    testing_env = gym.make('adver-v0', target_label=6, test_mode=True)
+    dqn_weight_file = max(Path(DQN_DIR).glob("*dqn_weights*.h5f"),  key=os.path.getctime)
+    print("**********************************")
+    print(f"dqn_weight_file={dqn_weight_file}")
+    print("**********************************")
+
+    testing_env = gym.make('adver-v0', target_label=1, test_mode=True,
+                           result_directory="results",
+                           test_description="RL_policy_small_action_set"
+                           )
+
     dqn = init_dqn(1000)
-    dqn.load_weights(DQN_WEIGHTS_FILENAME.format(step="final"))
-    dqn.test(testing_env, nb_episodes=nb_episodes, visualize=True)
+    dqn.load_weights(dqn_weight_file)
+    dqn.test(testing_env, nb_episodes=nb_episodes, visualize=True, callbacks=[CustomHistoryCallback()])
+
 
 
 @click.group()

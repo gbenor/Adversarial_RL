@@ -64,14 +64,12 @@ class AdversarialMNIST(gym.Env):
         self.observation_space = spaces.Box(low=0, high=1, shape=(28, 28), dtype=np.float32)
 
         self.init_step_size = step_size
-        self.step_size = None
         self.test_mode = test_mode
         self.result_directory = result_directory
         self.test_description = test_description
         if test_mode:
             assert result_directory is not None
             assert test_description is not None
-
 
         self.train_images, self.train_labels, self.test_images, self.test_labels = load_data()
 
@@ -80,8 +78,38 @@ class AdversarialMNIST(gym.Env):
                                     self.test_images, to_categorical(self.test_labels, NUM_CLASSES))
         # self.cluster = MNIST_Cluster(CLUSTER_FILE, NUM_OF_CLUSTERS, self.train_images, self.train_labels)
         self.cluster = Centers(fname=CENTER_FILE, k=SAMPLES_FOR_CALC_CENTERS, target_label=target_label,
-                               samples=self.train_images, labels=self.train_labels, force_fit=True)
+                               samples=self.train_images, labels=self.train_labels)
+
+        self.orig_image = None
+        self.orig_label = None
+        self.cur_image = None
+        self.current_step = None
+        self.current_step_while_acceptable_result = None
+        self.last_action = None
+        self.best_perturbation = None
+        self.step_size = None
+
+    def reset(self):
+        # Reset the state of the environment to an initial state
+        self.step_size = self.init_step_size
+        self.current_step = 0
+        self.current_step_while_acceptable_result = 0
+
+        sample, label = self.get_new_source_sample()
+        self.get_new_cluster()
+
+        self.orig_image = np.copy(sample)
+        self.orig_label = label
+        self.cur_image = np.copy(sample)
+
+        self.best_perturbation = {"norm" : float("inf"),
+                                  "image": np.copy(sample)}
+
+        return self._next_observation()
+
+    def get_new_cluster(self):
         while True:
+            self.cluster.fit()
             print("check that the centers are classified correctly")
             centers_classified_correct = True
             for c in self.cluster.get_centers():
@@ -91,22 +119,8 @@ class AdversarialMNIST(gym.Env):
             if centers_classified_correct:
                 break
             print("the centers aren't classified correctly. re-fit")
-            self.cluster.fit()
 
-
-        self.orig_image = None
-        self.orig_label = None
-        self.cur_image = None
-        self.current_step = None
-        self.current_step_while_acceptable_result = None
-        self.last_action = None
-
-    def reset(self):
-        # Reset the state of the environment to an initial state
-        self.step_size = self.init_step_size
-        self.current_step = 0
-        self.current_step_while_acceptable_result = 0
-
+    def get_new_source_sample(self):
         while True:
             print("check that the init image is classified correctly")
             if self.test_mode:
@@ -118,16 +132,10 @@ class AdversarialMNIST(gym.Env):
             predicted_class = np.argmax(p)
             print(label)
             if label == predicted_class:
-                break
+                return sample, label
             print("error in init label, select another label")
-            print (label)
+            print(label)
             print(predicted_class)
-
-        self.orig_image = np.copy(sample)
-        self.orig_label = label
-
-        self.cur_image = np.copy(sample)
-        return self._next_observation()
 
     def render(self, mode='human', close=False):
         obs = self._next_observation()
@@ -141,16 +149,17 @@ class AdversarialMNIST(gym.Env):
 
     def _next_observation(self):
         Observation = namedtuple('Observation', ['image', 'original_label', 'predicted_labels',
-                                                 'perturbation', 'perturbation_norm'])
+                                                 'perturbation', 'perturbation_norm', "steps"])
         predicted_labels = self.classifier._model(self.cur_image.reshape(1, 28, 28, 1)).numpy().ravel()
         perturbation = self.cur_image.reshape(28, 28) - self.orig_image.reshape(28, 28)
         perturbation_norm = LA.norm(perturbation, ord="fro")
-        return Observation(self.cur_image, self.orig_label, predicted_labels, perturbation, perturbation_norm)
+        return Observation(self.cur_image, self.orig_label, predicted_labels, perturbation,
+                           perturbation_norm, self.current_step)
 
     def _take_action(self, action: str):
         assert action in ACTIONS, f"illegal action: {action}"
         self.last_action = action
-        # print(f"Action = {action}")
+        print(f"Action = {action}")
         direction = None
         if action == "CLOSET_CLUSTER":
             direction = self.cluster.get_closest_center(self.cur_image)
@@ -160,10 +169,16 @@ class AdversarialMNIST(gym.Env):
             direction = self.orig_image
         if action == "DECREASE_STEP":
             self.step_size = decrease_step(self.step_size)
-            direction = np.zeros(shape=(28, 28, 1))
+            return
         if action == "INCREASE_STEP":
             self.step_size = increase_step(self.step_size)
-            direction = np.zeros(shape=(28, 28, 1))
+            return
+        if action == "NEW_CENTERS":
+            print("NEW_CENTERS")
+            self.step_size = self.init_step_size
+            self.get_new_cluster()
+            self.cur_image = np.copy(self.best_perturbation["image"])
+            return
 
         # self.cur_image += self.step_size * direction
         perturb = (direction - self.cur_image)
@@ -181,7 +196,7 @@ class AdversarialMNIST(gym.Env):
         self.current_step += 1
         if type(action) == str:
             self._take_action(str(action))
-        if type(action) == int:
+        else:
             self._take_action(ACTIONS[action])
         obs = self._next_observation()
 
@@ -201,6 +216,12 @@ class AdversarialMNIST(gym.Env):
             self.current_step_while_acceptable_result += 1
 
         done = (self.current_step == MAX_STEPS) or (self.current_step_while_acceptable_result == STEPS_TO_IMPROVE)
+
+        if reach_target_label(obs.predicted_labels, self.target_label):
+            if self.best_perturbation["norm"] > obs.perturbation_norm:
+                self.best_perturbation["norm"] = obs.perturbation_norm
+                self.best_perturbation["image"] = np.copy(obs.image)
+                print("update best perturbation")
 
         # self.history["images"].append(obs.image)
         # self.history["labels"].append(np.argmax(obs.predicted_labels))

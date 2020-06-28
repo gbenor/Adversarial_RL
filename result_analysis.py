@@ -16,10 +16,10 @@ def find_minpert_index(history, target):
     return index
 
 
-def get_steps_and_min_pert(target):
+def get_steps_and_min_pert(test_name, target):
     steps = []
     min_pert = []
-    for f in result_dir.glob(f"*target={target}*pkl*"):
+    for f in result_dir.glob(f"*{test_name}*target={target}*pkl*"):
         print(f"target {target} file {f}")
         with f.open('rb') as handle:
             history = pickle.load(handle)
@@ -30,17 +30,19 @@ def get_steps_and_min_pert(target):
     return np.array(steps), np.array(min_pert)
 
 
-def create_statistics():
+def create_statistics(test_name):
     pert_df = pd.DataFrame()
     steps_df = pd.DataFrame()
 
-    for target in range(10):
-        steps, min_pert = get_steps_and_min_pert(target)
+    # for target in range(10):
+    for target in [1]:
+        steps, min_pert = get_steps_and_min_pert(test_name, target)
         a = stats.describe(min_pert)
         pert_df = pert_df.append(pd.DataFrame([a], columns=a._fields))
         a = stats.describe(steps)
         steps_df = steps_df.append(pd.DataFrame([a], columns=a._fields))
     return pert_df, steps_df
+
 
 def join_pert_steps_df(pert_df, steps_df):
     df_dict = {"pert" : pert_df,
@@ -50,8 +52,8 @@ def join_pert_steps_df(pert_df, steps_df):
 
     for key in df_dict.keys():
         df_dict[key].reset_index(inplace=True)
-        df_dict[key]["min"] = pert_df["minmax"].apply(lambda x: x[0])
-        df_dict[key]["max"] = pert_df["minmax"].apply(lambda x: x[1])
+        df_dict[key]["min"] = df_dict[key]["minmax"].apply(lambda x: x[0])
+        df_dict[key]["max"] = df_dict[key]["minmax"].apply(lambda x: x[1])
         df_dict[key] = df_dict[key][final_col]
         df_dict[key] = df_dict[key].add_prefix(f"{key} ")
 
@@ -62,24 +64,23 @@ def join_pert_steps_df(pert_df, steps_df):
     result = result.round(decimals=2)
     result = result.astype({'nobs' : int,  'steps min' : int, 'steps max' : int})
     return result
-    # return result.round(decimals={'nobs' : 0,
-    #                               'pert min' : 2,
-    #                               'pert max' : 2,
-    #                               'pert mean' : 2,
-    #                               'pert variance' : 2,
-    #                               'steps min' : 0,
-    #                               'steps max' : 0,
-    #                               'steps mean' : 2,
-    #                               'steps variance': 2})
-    #
 
-if __name__ == '__main__':
-    pert_df, steps_df = create_statistics()
+
+def main(test_name):
+    pert_df, steps_df = create_statistics(test_name)
     results = join_pert_steps_df(pert_df, steps_df)
 
-    results.to_csv(result_dir/"results.csv")
-
+    results.to_csv(result_dir / f"{test_name}_results.csv")
     print(results)
+
+
+if __name__ == '__main__':
+    # tests = ["simple_centers"]
+    # tests = ["iterative_centers"]
+    # tests = ["iterative_centers_new_init_step"]
+    tests = ["RL_policy_small_action_set"]
+    for test_name in tests:
+        main(test_name)
 
 
 

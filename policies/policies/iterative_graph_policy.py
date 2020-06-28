@@ -7,7 +7,7 @@ from gym_adversarial.envs.AdversarialCallbacks import CustomHistoryCallback
 
 G = nx.DiGraph()
 G.add_node("ToClosetTarget", action="CLOSET_CLUSTER", stop_on_target=True)
-G.add_node("ChangeCenters", action="CLOSET_CLUSTER", stop_on_target=True)
+G.add_node("ChangeCenters", action="NEW_CENTERS", stop_on_target=None)
 G.add_node("ReachBoundaryToClosetTarget", action="DECREASE_STEP", stop_on_target=None)
 G.add_node("FromClosetTarget", action="ORIGINAL_IMAGE", stop_on_target=False)
 G.add_node("ReachBoundaryFromClosetTarget", action=None, stop_on_target=None)
@@ -16,7 +16,8 @@ G.add_node("ReachBoundaryToFarthestTarget", action="DECREASE_STEP", stop_on_targ
 G.add_node("FromFarthestTarget", action="ORIGINAL_IMAGE", stop_on_target=False)
 G.add_node("ReachBoundaryFromFarthestTarget", action=None, stop_on_target=None)
 
-elist=[("ToClosetTarget", "ReachBoundaryToClosetTarget"),
+elist=[("ToClosetTarget", "ChangeCenters"),
+       ("ChangeCenters", "ReachBoundaryToClosetTarget"),
        ("ReachBoundaryToClosetTarget", "FromClosetTarget"),
        ("FromClosetTarget", "ReachBoundaryFromClosetTarget"),
        ("ReachBoundaryFromClosetTarget", "ToFarthestTarget"),
@@ -27,7 +28,7 @@ elist=[("ToClosetTarget", "ReachBoundaryToClosetTarget"),
 G.add_edges_from(elist)
 
 
-def test_policy_for_target(nb_episodes: int, target: int, test_description="simple_centers"):
+def test_policy_for_target(nb_episodes: int, target: int, test_description="iterative_centers_new_init_step"):
     testing_env = gym.make('adver-v0', target_label=target, test_mode=True,
                            result_directory="results",
                            test_description=test_description

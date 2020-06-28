@@ -13,7 +13,7 @@ def calc_distance(s1, s2):
 
 
 class Centers():
-    def __init__(self, fname, k, target_label, samples, labels, force_fit=False):
+    def __init__(self, fname, k, target_label, samples, labels):
         self._fname = Path(fname)
         self.model = None
 
@@ -22,7 +22,7 @@ class Centers():
         self.samples = samples
         self.labels = labels
 
-        self.fit()
+        # self.fit()
 
     #     if (not self._fname.exists()) or force_fit:
     #         self.fit()
